@@ -30,7 +30,7 @@
 #define  SDHCI_SPRD_DLL_EN		BIT(21)
 #define  SDHCI_SPRD_DLL_SEARCH_MODE	BIT(16)
 #define  SDHCI_SPRD_DLL_INIT_COUNT	0xc00
-#define  SDHCI_SPRD_DLL_PHASE_INTERNAL	0x3
+#define  SDHCI_SPRD_DLL_PHASE_INTERNAL	0x2 /* MU300 r11p3 */
 
 #define SDHCI_SPRD_REG_32_DLL_DLY	0x204
 
@@ -89,7 +89,19 @@ struct sdhci_sprd_host {
 	u32 base_rate;
 	int flags; /* backup of host attribute */
 	u32 phy_delay[MMC_TIMING_MMC_HS400 + 2];
+	bool fail_hs400es; /* test hook: this HS400ES selection fails */
 };
+
+/*
+ * MU300 test hook for the core's bus timing fallback: the next N enhanced
+ * strobe (HS400ES) selections of the eMMC fail as some do at a cold boot, with
+ * a CRC error (-EILSEQ) on the CMD13 that checks the switch. Set on the kernel
+ * command line (sdhci_sprd.fail_hs400es=1) or written before the host is bound
+ * again. 0, the default, changes nothing.
+ */
+static unsigned int fail_hs400es;
+module_param(fail_hs400es, uint, 0644);
+MODULE_PARM_DESC(fail_hs400es, "test: fail the next N HS400ES selections with a CRC error");
 
 enum sdhci_sprd_tuning_type {
 	SDHCI_SPRD_TUNING_SD_HS_CMD,
@@ -130,7 +142,8 @@ static inline u32 sdhci_sprd_readl(struct sdhci_host *host, int reg)
 	if (unlikely(reg == SDHCI_MAX_CURRENT))
 		return SDHCI_SPRD_MAX_CUR;
 
-	return readl_relaxed(host->ioaddr + reg);
+	/* MU300: ordered MMIO, as the generic SDHCI accessors (FINDINGS 93) */
+	return readl(host->ioaddr + reg);
 }
 
 static inline void sdhci_sprd_writel(struct sdhci_host *host, u32 val, int reg)
@@ -142,7 +155,7 @@ static inline void sdhci_sprd_writel(struct sdhci_host *host, u32 val, int reg)
 	if (unlikely(reg == SDHCI_SIGNAL_ENABLE || reg == SDHCI_INT_ENABLE))
 		val = val & SDHCI_SPRD_INT_SIGNAL_MASK;
 
-	writel_relaxed(val, host->ioaddr + reg);
+	writel(val, host->ioaddr + reg);
 }
 
 static inline void sdhci_sprd_writew(struct sdhci_host *host, u16 val, int reg)
@@ -151,7 +164,7 @@ static inline void sdhci_sprd_writew(struct sdhci_host *host, u16 val, int reg)
 	if (unlikely(reg == SDHCI_BLOCK_COUNT))
 		return;
 
-	writew_relaxed(val, host->ioaddr + reg);
+	writew(val, host->ioaddr + reg);
 }
 
 static inline void sdhci_sprd_writeb(struct sdhci_host *host, u8 val, int reg)
@@ -169,7 +182,7 @@ static inline void sdhci_sprd_writeb(struct sdhci_host *host, u8 val, int reg)
 			val |= SDHCI_HW_RESET_CARD;
 	}
 
-	writeb_relaxed(val, host->ioaddr + reg);
+	writeb(val, host->ioaddr + reg);
 }
 
 static inline void sdhci_sprd_sd_clk_off(struct sdhci_host *host)
@@ -478,6 +491,16 @@ static void sdhci_sprd_check_auto_cmd23(struct mmc_host *mmc,
 
 static void sdhci_sprd_request(struct mmc_host *mmc, struct mmc_request *mrq)
 {
+	struct sdhci_sprd_host *sprd_host = TO_SPRD_HOST(mmc_priv(mmc));
+
+	/* the test hook: only while a new card is set up at HS400ES */
+	if (unlikely(sprd_host->fail_hs400es) && mmc->ios.enhanced_strobe &&
+	    !mmc->card && mrq->cmd->opcode == MMC_SEND_STATUS) {
+		mrq->cmd->error = -EILSEQ;
+		mmc_request_done(mmc, mrq);
+		return;
+	}
+
 	sdhci_sprd_check_auto_cmd23(mmc, mrq);
 
 	sdhci_request(mmc, mrq);
@@ -552,6 +575,13 @@ static void sdhci_sprd_hs400_enhanced_strobe(struct mmc_host *mmc,
 
 	if (!ios->enhanced_strobe)
 		return;
+
+	sprd_host->fail_hs400es = fail_hs400es > 0;
+	if (sprd_host->fail_hs400es) {
+		fail_hs400es--;
+		pr_warn("%s: test: this HS400ES selection fails (sdhci_sprd.fail_hs400es)\n",
+			mmc_hostname(mmc));
+	}
 
 	sdhci_sprd_sd_clk_off(host);
 
@@ -728,6 +758,42 @@ static const struct sdhci_pltfm_data sdhci_sprd_pdata = {
 	.ops = &sdhci_sprd_ops,
 };
 
+/* MU300: the eMMC is mmc0, the card slot mmc1: see sdhci_sprd_probe() */
+static bool sdhci_sprd_emmc_added;
+
+static bool sdhci_sprd_emmc_pending(struct device_node *self)
+{
+	struct device_node *np;
+
+	if (READ_ONCE(sdhci_sprd_emmc_added))
+		return false;
+	for_each_compatible_node(np, NULL, "sprd,sdhci-r11") {
+		if (np != self && of_device_is_available(np) &&
+		    of_property_read_bool(np, "non-removable")) {
+			of_node_put(np);
+			return true;
+		}
+	}
+	return false;
+}
+
+/*
+ * MU300: the ZTE V50's eMMC host is never runtime-suspended. On a V50 under mainline, ext4 found directory entries
+ * of deleted inodes after reboots, again after an fsck; with its host kept awake from probe on (before the first
+ * autosuspend) the data survived a reboot (kano, 2026-10-14; FINDINGS 95). The V50 is told by its AW9523B LED
+ * controller, which no F50's or U30 Air's device tree has: on those nothing changes. It has no battery to save.
+ */
+static bool sdhci_sprd_keep_awake(struct sdhci_host *host)
+{
+	struct device_node *np;
+
+	if (mmc_card_is_removable(host->mmc))
+		return false;
+	np = of_find_compatible_node(NULL, NULL, "awinic,aw9523b");
+	of_node_put(np);
+	return np;
+}
+
 static int sdhci_sprd_probe(struct platform_device *pdev)
 {
 	struct sdhci_host *host;
@@ -735,6 +801,15 @@ static int sdhci_sprd_probe(struct platform_device *pdev)
 	struct mmc_hsq *hsq;
 	struct clk *clk;
 	int ret = 0;
+	/* MU300: only the eMMC and the card slot */
+	if (!of_property_read_bool(pdev->dev.of_node, "non-removable") &&
+	    of_property_match_string(pdev->dev.of_node, "sprd,name", "sdio_sd") < 0)
+		return -ENODEV;
+	/* MU300: the card slot waits for the eMMC's host. If that never binds, the card slot stays deferred:
+	 * no SD root without a working eMMC host. */
+	if (!of_property_read_bool(pdev->dev.of_node, "non-removable") &&
+	    sdhci_sprd_emmc_pending(pdev->dev.of_node))
+		return -EPROBE_DEFER;
 
 	host = sdhci_pltfm_init(pdev, &sdhci_sprd_pdata, sizeof(*sprd_host));
 	if (IS_ERR(host))
@@ -763,6 +838,16 @@ static int sdhci_sprd_probe(struct platform_device *pdev)
 		MMC_CAP_WAIT_WHILE_BUSY;
 
 	ret = mmc_of_parse(host->mmc);
+	if (ret == -EPROBE_DEFER &&
+	    of_property_match_string(pdev->dev.of_node, "sprd,name", "sdio_sd") >= 0) {
+		struct property *cd = of_find_property(pdev->dev.of_node, "cd-gpios", NULL);
+
+		if (cd && !of_remove_property(pdev->dev.of_node, cd)) {
+			dev_warn(&pdev->dev, "MU300: CD GPIO deferred, polling the card slot\n");
+			ret = mmc_of_parse(host->mmc);
+			host->mmc->caps |= MMC_CAP_NEEDS_POLL;
+		}
+	}
 	if (ret)
 		return ret;
 
@@ -827,6 +912,10 @@ static int sdhci_sprd_probe(struct platform_device *pdev)
 	pm_runtime_set_autosuspend_delay(&pdev->dev, 50);
 	pm_runtime_use_autosuspend(&pdev->dev);
 	pm_suspend_ignore_children(&pdev->dev, 1);
+	if (sdhci_sprd_keep_awake(host)) {
+		pm_runtime_forbid(&pdev->dev);
+		dev_info(&pdev->dev, "MU300: ZTE V50, eMMC host kept awake\n");
+	}
 
 	sdhci_enable_v4_mode(host);
 
@@ -862,6 +951,8 @@ static int sdhci_sprd_probe(struct platform_device *pdev)
 	ret = __sdhci_add_host(host);
 	if (ret)
 		goto err_cleanup_host;
+	if (of_property_read_bool(pdev->dev.of_node, "non-removable"))
+		WRITE_ONCE(sdhci_sprd_emmc_added, true);
 
 	pm_runtime_put_autosuspend(&pdev->dev);
 
@@ -871,6 +962,8 @@ err_cleanup_host:
 	sdhci_cleanup_host(host);
 
 pm_runtime_disable:
+	if (sdhci_sprd_keep_awake(host))
+		pm_runtime_allow(&pdev->dev);
 	pm_runtime_put_noidle(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
 	pm_runtime_set_suspended(&pdev->dev);

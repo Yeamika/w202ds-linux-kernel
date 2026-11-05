@@ -517,6 +517,12 @@ static int sprd_i2c_probe(struct platform_device *pdev)
 	if (!of_property_read_u32(dev->of_node, "clock-frequency", &prop))
 		i2c_dev->bus_freq = prop;
 
+	if (i2c_dev->bus_freq > I2C_MAX_FAST_MODE_FREQ &&
+            of_device_is_compatible(dev->of_node, "sprd,qogirn6pro-i2c")) {
+                dev_warn(dev, "W202DS: using 400 kHz instead of unsupported %u Hz\n",
+                         i2c_dev->bus_freq);
+                i2c_dev->bus_freq = I2C_MAX_FAST_MODE_FREQ;
+        }
 	/* We only support 100k and 400k now, otherwise will return error. */
 	if (i2c_dev->bus_freq != I2C_MAX_STANDARD_MODE_FREQ &&
 	    i2c_dev->bus_freq != I2C_MAX_FAST_MODE_FREQ)

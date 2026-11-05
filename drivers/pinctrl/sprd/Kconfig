@@ -19,3 +19,12 @@ config PINCTRL_SPRD_SC9860
 	select PINCTRL_SPRD
 	help
 	  Say Y here to enable Spreadtrum SC9860 pinctrl driver
+
+config PINCTRL_SPRD_QOGIRN6PRO
+	tristate "Unisoc UMS9620 (qogirn6pro) pinctrl driver"
+	depends on OF
+	depends on ARCH_SPRD || COMPILE_TEST
+	select PINCTRL_SPRD
+	help
+	  Say Y here to enable the Unisoc UMS9620 (qogirn6pro) pinctrl driver,
+	  ported from Unisoc's 5.4 kernel.

@@ -515,6 +515,12 @@ static int dwc3_setup_role_switch(struct dwc3 *dwc)
 	dwc3_role_switch.set = dwc3_usb_role_switch_set;
 	dwc3_role_switch.get = dwc3_usb_role_switch_get;
 	dwc3_role_switch.driver_data = dwc;
+	/*
+	 * UMS9620 (ZTE U30 Air): no Type-C driver to tell what is plugged in under mainline, so the role is chosen
+	 * from userspace (/sys/class/usb_role/<dev>-role-switch/role, mu300-usb)
+	 */
+	if (of_device_is_compatible(dwc->dev->of_node, "snps,sprd-dwc3"))
+		dwc3_role_switch.allow_userspace_control = true;
 	dwc->role_sw = usb_role_switch_register(dwc->dev, &dwc3_role_switch);
 	if (IS_ERR(dwc->role_sw))
 		return PTR_ERR(dwc->role_sw);

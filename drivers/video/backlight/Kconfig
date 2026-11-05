@@ -497,3 +497,6 @@ config BACKLIGHT_LED
 endif # BACKLIGHT_CLASS_DEVICE
 
 endmenu
+
+
+source "drivers/video/backlight/w202ds/Kconfig"

@@ -99,6 +99,25 @@ config OF_IRQ
 config OF_RESERVED_MEM
 	def_bool OF_EARLY_FLATTREE
 
+config OF_RESERVED_MEM_SKIP
+	string "Reserved memory nodes to ignore"
+	depends on OF_RESERVED_MEM
+	default ""
+	help
+	  Comma separated /reserved-memory node names (without @unit) that
+	  are not reserved, so the memory stays available to Linux. Can be
+	  overridden with reserved_mem_skip= on the command line.
+
+config OF_RESERVED_MEM_ADD
+	string "Extra memory ranges to reserve"
+	depends on OF_RESERVED_MEM
+	default ""
+	help
+	  Semicolon separated base,size pairs (memparse syntax, so 0xaf700000,3M
+	  works) reserved as though /reserved-memory had listed them: for memory
+	  a device needs and the device tree does not reserve. Can be overridden
+	  with reserved_mem_add= on the command line.
+
 config OF_RESOLVE
 	bool
 

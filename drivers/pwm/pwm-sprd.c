@@ -9,6 +9,7 @@
 #include <linux/math64.h>
 #include <linux/mod_devicetable.h>
 #include <linux/module.h>
+#include <linux/of_device.h>
 #include <linux/platform_device.h>
 #include <linux/pwm.h>
 
@@ -17,13 +18,11 @@
 #define SPRD_PWM_DUTY		0x8
 #define SPRD_PWM_ENABLE		0x18
 
-#define SPRD_PWM_MOD_MAX	GENMASK(7, 0)
 #define SPRD_PWM_DUTY_MSK	GENMASK(15, 0)
 #define SPRD_PWM_PRESCALE_MSK	GENMASK(7, 0)
 #define SPRD_PWM_ENABLE_BIT	BIT(0)
 
 #define SPRD_PWM_CHN_NUM	4
-#define SPRD_PWM_REGS_SHIFT	5
 #define SPRD_PWM_CHN_CLKS_NUM	2
 #define SPRD_PWM_CHN_OUTPUT_CLK	1
 
@@ -32,7 +31,20 @@ struct sprd_pwm_chn {
 	u32 clk_rate;
 };
 
+struct sprd_pwm_variant {
+	u32 reg_shift;
+	u32 mod_max;
+};
+
+static const struct sprd_pwm_variant ums512_pwm = {
+	.reg_shift = 5, .mod_max = GENMASK(7, 0),
+};
+static const struct sprd_pwm_variant qogirn6pro_pwm = {
+	.reg_shift = 14, .mod_max = GENMASK(9, 0),
+};
+
 struct sprd_pwm_chip {
+	const struct sprd_pwm_variant *variant;
 	void __iomem *base;
 	struct sprd_pwm_chn chn[SPRD_PWM_CHN_NUM];
 };
@@ -55,7 +67,7 @@ static const char * const sprd_pwm_clks[] = {
 
 static u32 sprd_pwm_read(struct sprd_pwm_chip *spc, u32 hwid, u32 reg)
 {
-	u32 offset = reg + (hwid << SPRD_PWM_REGS_SHIFT);
+	u32 offset = reg + (hwid << spc->variant->reg_shift);
 
 	return readl_relaxed(spc->base + offset);
 }
@@ -63,7 +75,7 @@ static u32 sprd_pwm_read(struct sprd_pwm_chip *spc, u32 hwid, u32 reg)
 static void sprd_pwm_write(struct sprd_pwm_chip *spc, u32 hwid,
 			   u32 reg, u32 val)
 {
-	u32 offset = reg + (hwid << SPRD_PWM_REGS_SHIFT);
+	u32 offset = reg + (hwid << spc->variant->reg_shift);
 
 	writel_relaxed(val, spc->base + offset);
 }
@@ -104,7 +116,7 @@ static int sprd_pwm_get_state(struct pwm_chip *chip, struct pwm_device *pwm,
 	 */
 	val = sprd_pwm_read(spc, pwm->hwpwm, SPRD_PWM_PRESCALE);
 	prescale = val & SPRD_PWM_PRESCALE_MSK;
-	tmp = (prescale + 1) * NSEC_PER_SEC * SPRD_PWM_MOD_MAX;
+	tmp = (prescale + 1) * NSEC_PER_SEC * spc->variant->mod_max;
 	state->period = DIV_ROUND_CLOSEST_ULL(tmp, chn->clk_rate);
 
 	val = sprd_pwm_read(spc, pwm->hwpwm, SPRD_PWM_DUTY);
@@ -132,16 +144,16 @@ static int sprd_pwm_config(struct sprd_pwm_chip *spc, struct pwm_device *pwm,
 	 * The period length is (PRESCALE + 1) * MOD counter steps.
 	 * The duty cycle length is (PRESCALE + 1) * DUTY counter steps.
 	 *
-	 * To keep the maths simple we're always using MOD = SPRD_PWM_MOD_MAX.
+	 * To keep the maths simple we're always using MOD = spc->variant->mod_max.
 	 * The value for PRESCALE is selected such that the resulting period
 	 * gets the maximal length not bigger than the requested one with the
-	 * given settings (MOD = SPRD_PWM_MOD_MAX and input clock).
+	 * given settings (MOD = spc->variant->mod_max and input clock).
 	 */
-	duty = duty_ns * SPRD_PWM_MOD_MAX / period_ns;
+	duty = duty_ns * spc->variant->mod_max / period_ns;
 
 	tmp = (u64)chn->clk_rate * period_ns;
 	do_div(tmp, NSEC_PER_SEC);
-	prescale = DIV_ROUND_CLOSEST_ULL(tmp, SPRD_PWM_MOD_MAX) - 1;
+	prescale = max_t(u64, 1, DIV_ROUND_CLOSEST_ULL(tmp, spc->variant->mod_max)) - 1;
 	if (prescale > SPRD_PWM_PRESCALE_MSK)
 		prescale = SPRD_PWM_PRESCALE_MSK;
 
@@ -154,7 +166,7 @@ static int sprd_pwm_config(struct sprd_pwm_chip *spc, struct pwm_device *pwm,
 	 * before changing a new configuration to avoid mixed settings.
 	 */
 	sprd_pwm_write(spc, pwm->hwpwm, SPRD_PWM_PRESCALE, prescale);
-	sprd_pwm_write(spc, pwm->hwpwm, SPRD_PWM_MOD, SPRD_PWM_MOD_MAX);
+	sprd_pwm_write(spc, pwm->hwpwm, SPRD_PWM_MOD, spc->variant->mod_max);
 	sprd_pwm_write(spc, pwm->hwpwm, SPRD_PWM_DUTY, duty);
 
 	return 0;
@@ -260,6 +272,9 @@ static int sprd_pwm_probe(struct platform_device *pdev)
 	if (IS_ERR(chip))
 		return PTR_ERR(chip);
 	spc = sprd_pwm_from_chip(chip);
+	spc->variant = of_device_get_match_data(&pdev->dev);
+	if (!spc->variant)
+		return -EINVAL;
 
 	spc->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(spc->base))
@@ -277,7 +292,8 @@ static int sprd_pwm_probe(struct platform_device *pdev)
 }
 
 static const struct of_device_id sprd_pwm_of_match[] = {
-	{ .compatible = "sprd,ums512-pwm", },
+	{ .compatible = "sprd,ums512-pwm", .data = &ums512_pwm },
+	{ .compatible = "sprd,qogirn6pro-pwm", .data = &qogirn6pro_pwm },
 	{ },
 };
 MODULE_DEVICE_TABLE(of, sprd_pwm_of_match);

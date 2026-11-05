@@ -519,3 +519,9 @@ config PCIE_VISCONTI_HOST
 	  This driver supports TMPV7708 SoC.
 
 endmenu
+
+config PCIE_SPRD
+	bool "Unisoc UMS9620 PCIe host (Marlin3)"
+	depends on OF && PCI_MSI
+	select PCIE_DW_HOST
+	select MFD_SYSCON

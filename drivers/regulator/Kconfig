@@ -1818,4 +1818,10 @@ config REGULATOR_QCOM_LABIBB
 	  boost regulator and IBB can be used as a negative boost regulator
 	  for LCD display panel.
 
+config REGULATOR_UMP9620
+	tristate "Unisoc UMP9620 PMIC regulators"
+	depends on MFD_SC27XX_PMIC || COMPILE_TEST
+	help
+	  Regulators of the UMP9620 PMIC (ported from the Unisoc 5.4 kernel).
+
 endif

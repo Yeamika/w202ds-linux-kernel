@@ -5,10 +5,13 @@
 // Copyright (C) 2017 Spreadtrum, Inc.
 // Author: Chunyan Zhang <chunyan.zhang@spreadtrum.com>
 
+#include <linux/device.h>
+#include <linux/io.h>
 #include <linux/mfd/syscon.h>
+#include <linux/platform_device.h>
 #include <linux/module.h>
 #include <linux/of_address.h>
-#include <linux/platform_device.h>
+#include <linux/of_platform.h>
 #include <linux/regmap.h>
 
 #include "common.h"
@@ -39,35 +42,29 @@ int sprd_clk_regmap_init(struct platform_device *pdev,
 			 const struct sprd_clk_desc *desc)
 {
 	void __iomem *base;
-	struct device *dev = &pdev->dev;
-	struct device_node *node = dev->of_node, *np;
+	struct device_node *node = pdev->dev.of_node;
 	struct regmap *regmap;
 	struct resource *res;
-	struct regmap_config reg_config = sprdclk_regmap_config;
+	struct regmap_config clk_regmap_config = sprdclk_regmap_config;
 
-	if (of_property_present(node, "sprd,syscon")) {
+	if (of_find_property(node, "sprd,syscon", NULL)) {
 		regmap = syscon_regmap_lookup_by_phandle(node, "sprd,syscon");
 		if (IS_ERR(regmap)) {
 			pr_err("%s: failed to get syscon regmap\n", __func__);
 			return PTR_ERR(regmap);
 		}
-	} else if (of_device_is_compatible(np =	of_get_parent(node), "syscon") ||
-		   (of_node_put(np), 0)) {
-		regmap = device_node_to_regmap(np);
-		of_node_put(np);
-		if (IS_ERR(regmap)) {
-			dev_err(dev, "failed to get regmap from its parent.\n");
-			return PTR_ERR(regmap);
-		}
 	} else {
-		base = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
+		res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+		if (!res)
+			return -ENODEV;
+
+		base = devm_ioremap_resource(&pdev->dev, res);
 		if (IS_ERR(base))
 			return PTR_ERR(base);
 
-		reg_config.max_register = resource_size(res) - reg_config.reg_stride;
-
+		clk_regmap_config.max_register = resource_size(res) - clk_regmap_config.reg_stride;
 		regmap = devm_regmap_init_mmio(&pdev->dev, base,
-					       &reg_config);
+					       &clk_regmap_config);
 		if (IS_ERR(regmap)) {
 			pr_err("failed to init regmap\n");
 			return PTR_ERR(regmap);
@@ -75,6 +72,7 @@ int sprd_clk_regmap_init(struct platform_device *pdev,
 	}
 
 	sprd_clk_set_regmap(desc, regmap);
+	platform_set_drvdata(pdev, regmap);
 
 	return 0;
 }
@@ -109,5 +107,4 @@ int sprd_clk_probe(struct device *dev, struct clk_hw_onecell_data *clkhw)
 }
 EXPORT_SYMBOL_GPL(sprd_clk_probe);
 
-MODULE_DESCRIPTION("Spreadtrum clock infrastructure");
 MODULE_LICENSE("GPL v2");

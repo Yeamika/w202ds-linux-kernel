@@ -29,8 +29,6 @@
 #include "pinctrl-sprd.h"
 
 #define PINCTRL_BIT_MASK(width)		(~(~0UL << (width)))
-#define PINCTRL_REG_OFFSET		0x20
-#define PINCTRL_REG_MISC_OFFSET		0x4020
 #define PINCTRL_REG_LEN			0x4
 
 #define PIN_FUNC_MASK			(BIT(4) | BIT(5))
@@ -147,12 +145,16 @@ struct sprd_pinctrl_soc_info {
  * @pctl: pointer to the pinctrl handle
  * @base: base address of the controller
  * @info: pointer to SoC's pins description information
+ * @common_pin_offset: offset of the first common pin's register (per SoC)
+ * @misc_pin_offset: offset of the first misc pin's register (per SoC)
  */
 struct sprd_pinctrl {
 	struct device *dev;
 	struct pinctrl_dev *pctl;
 	void __iomem *base;
 	struct sprd_pinctrl_soc_info *info;
+	u32 common_pin_offset;
+	u32 misc_pin_offset;
 };
 
 #define SPRD_PIN_CONFIG_CONTROL		(PIN_CONFIG_END + 1)
@@ -1013,12 +1015,12 @@ static int sprd_pinctrl_add_pins(struct sprd_pinctrl *sprd_pctl,
 			ctrl_pin++;
 		} else if (pin->type == COMMON_PIN) {
 			pin->reg = (unsigned long)sprd_pctl->base +
-				PINCTRL_REG_OFFSET + PINCTRL_REG_LEN *
+				sprd_pctl->common_pin_offset + PINCTRL_REG_LEN *
 				(i - ctrl_pin);
 			com_pin++;
 		} else if (pin->type == MISC_PIN) {
 			pin->reg = (unsigned long)sprd_pctl->base +
-				PINCTRL_REG_MISC_OFFSET + PINCTRL_REG_LEN *
+				sprd_pctl->misc_pin_offset + PINCTRL_REG_LEN *
 				(i - ctrl_pin - com_pin);
 		}
 	}
@@ -1033,9 +1035,93 @@ static int sprd_pinctrl_add_pins(struct sprd_pinctrl *sprd_pctl,
 	return 0;
 }
 
+static struct sprd_pin *sprd_pinctrl_get_pin_by_name(struct sprd_pinctrl *pctl,
+						     const char *name)
+{
+	struct sprd_pinctrl_soc_info *info = pctl->info;
+	int i;
+
+	for (i = 0; i < info->npins; i++)
+		if (!strcmp(info->pins[i].name, name))
+			return &info->pins[i];
+
+	return NULL;
+}
+
+/**
+ * sprd_pinctrl_get_pin_raw - read a pin's register (a global control pin: its bit field)
+ * @pdev: the pin controller
+ * @name: the pin's name, as in the SoC driver's table
+ * @val: where the value goes
+ */
+int sprd_pinctrl_get_pin_raw(struct platform_device *pdev, const char *name,
+			     u32 *val)
+{
+	struct sprd_pinctrl *pctl = platform_get_drvdata(pdev);
+	struct sprd_pin *pin = sprd_pinctrl_get_pin_by_name(pctl, name);
+
+	if (!pin)
+		return -ENOENT;
+
+	if (pin->type == GLOBAL_CTRL_PIN)
+		*val = (readl((void __iomem *)pin->reg) >> pin->bit_offset) &
+			PINCTRL_BIT_MASK(pin->bit_width);
+	else
+		*val = readl((void __iomem *)pin->reg);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(sprd_pinctrl_get_pin_raw);
+
+/**
+ * sprd_pinctrl_set_pin_func - select a common pin's function outside any pin group
+ * @pdev: the pin controller
+ * @name: the pin's name, as in the SoC driver's table
+ * @func: the function, 1 to 4 (func1 is the pad's own function, func4 the GPIO)
+ *
+ * A stand-in for the pin group a device tree lacks: the vendor DT the MU300
+ * boots with names no group for the pads of the U30 Air's charger bus (i2c6),
+ * so the bootloader's state would stand. Returns 1 when the register was
+ * changed, 0 when the pad was on that function already.
+ */
+int sprd_pinctrl_set_pin_func(struct platform_device *pdev, const char *name,
+			      unsigned int func)
+{
+	struct sprd_pinctrl *pctl = platform_get_drvdata(pdev);
+	struct sprd_pin *pin = sprd_pinctrl_get_pin_by_name(pctl, name);
+	unsigned int reg, val;
+
+	if (!pin || pin->type != COMMON_PIN || func < 1 || func > PIN_FUNC_MAX)
+		return -EINVAL;
+
+	switch (func) {
+	case 2:
+		val = PIN_FUNC_SEL_2;
+		break;
+	case 3:
+		val = PIN_FUNC_SEL_3;
+		break;
+	case 4:
+		val = PIN_FUNC_SEL_4;
+		break;
+	default:
+		val = 0;
+		break;
+	}
+
+	reg = readl((void __iomem *)pin->reg);
+	if ((reg & PIN_FUNC_MASK) == val)
+		return 0;
+
+	writel((reg & ~PIN_FUNC_MASK) | val, (void __iomem *)pin->reg);
+	return 1;
+}
+EXPORT_SYMBOL_GPL(sprd_pinctrl_set_pin_func);
+
 int sprd_pinctrl_core_probe(struct platform_device *pdev,
 			    struct sprd_pins_info *sprd_soc_pin_info,
-			    int pins_cnt)
+			    int pins_cnt, u32 common_pin_offset,
+			    u32 misc_pin_offset)
 {
 	struct sprd_pinctrl *sprd_pctl;
 	struct sprd_pinctrl_soc_info *pinctrl_info;
@@ -1050,6 +1136,9 @@ int sprd_pinctrl_core_probe(struct platform_device *pdev,
 	sprd_pctl->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(sprd_pctl->base))
 		return PTR_ERR(sprd_pctl->base);
+
+	sprd_pctl->common_pin_offset = common_pin_offset;
+	sprd_pctl->misc_pin_offset = misc_pin_offset;
 
 	pinctrl_info = devm_kzalloc(&pdev->dev,
 				    sizeof(struct sprd_pinctrl_soc_info),

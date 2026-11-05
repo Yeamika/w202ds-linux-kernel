@@ -518,3 +518,8 @@ config LOONGSON2_THERMAL
 	  temperature threshold, the interrupt will occur.
 
 endif
+
+config SPRD_THERMAL_R5P0
+	tristate "Unisoc UMS9620 thermal sensors (r5p0)"
+	depends on ARCH_SPRD || COMPILE_TEST
+	depends on HAS_IOMEM && NVMEM && THERMAL_OF

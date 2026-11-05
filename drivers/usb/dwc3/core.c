@@ -2801,6 +2801,9 @@ static const struct of_device_id of_dwc3_match[] = {
 	{
 		.compatible = "synopsys,dwc3"
 	},
+	{
+		.compatible = "snps,sprd-dwc3"
+	},
 	{ },
 };
 MODULE_DEVICE_TABLE(of, of_dwc3_match);

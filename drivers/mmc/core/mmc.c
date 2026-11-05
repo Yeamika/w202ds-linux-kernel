@@ -1550,6 +1550,50 @@ err:
 }
 
 /*
+ * A bus timing that failed to come up is not tried again on this host: the
+ * next initialisation (mmc_rescan's next attempt, a reset or a resume) takes
+ * the next slower one, HS400ES -> HS200 -> HS/DDR52 -> HS. Some eMMC and host
+ * pairs fail the HS400ES switch with CRC errors at a cold boot and work at
+ * HS200; without this the card was given up after mmc_rescan's attempts, every
+ * one of them at HS400ES. The new card line ("new HS200 MMC card") tells which
+ * timing was taken in the end.
+ */
+static void mmc_timing_fallback(struct mmc_card *card, int err)
+{
+	struct mmc_host *host = card->host;
+	const char *failed, *next;
+
+	if (err == -ENOMEDIUM)
+		return;
+
+	if (card->mmc_avail_type & EXT_CSD_CARD_TYPE_HS400ES) {
+		host->caps2 &= ~(MMC_CAP2_HS400_ES | MMC_CAP2_HS400);
+		failed = "HS400ES";
+	} else if (card->mmc_avail_type & (EXT_CSD_CARD_TYPE_HS200 |
+					   EXT_CSD_CARD_TYPE_HS400)) {
+		host->caps2 &= ~(MMC_CAP2_HS200 | MMC_CAP2_HS400);
+		failed = "HS200";
+	} else if (card->mmc_avail_type & EXT_CSD_CARD_TYPE_DDR_52) {
+		host->caps &= ~MMC_CAP_DDR;
+		failed = "DDR52";
+	} else {
+		return;
+	}
+
+	if (host->caps2 & MMC_CAP2_HS200 &&
+	    card->ext_csd.raw_card_type & EXT_CSD_CARD_TYPE_HS200)
+		next = "HS200";
+	else if (host->caps & MMC_CAP_DDR &&
+		 card->ext_csd.raw_card_type & EXT_CSD_CARD_TYPE_DDR_52)
+		next = "HS/DDR52";
+	else
+		next = "HS";
+
+	pr_warn("%s: %s failed (%d), the next initialisation uses %s\n",
+		mmc_hostname(host), failed, err, next);
+}
+
+/*
  * Activate High Speed, HS200 or HS400ES mode if supported.
  */
 static int mmc_select_timing(struct mmc_card *card)
@@ -1829,7 +1873,7 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 	 */
 	err = mmc_select_timing(card);
 	if (err)
-		goto free_card;
+		goto timing_failed;
 
 	if (mmc_card_hs200(card)) {
 		host->doing_init_tune = 1;
@@ -1841,12 +1885,12 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 		host->doing_init_tune = 0;
 
 		if (err)
-			goto free_card;
+			goto timing_failed;
 	} else if (mmc_card_hs400es(card)) {
 		if (host->ops->execute_hs400_tuning) {
 			err = host->ops->execute_hs400_tuning(host, card);
 			if (err)
-				goto free_card;
+				goto timing_failed;
 		}
 	} else {
 		/* Select the desired bus width optionally */
@@ -1854,7 +1898,7 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 		if (err > 0 && mmc_card_hs(card)) {
 			err = mmc_select_hs_ddr(card);
 			if (err)
-				goto free_card;
+				goto timing_failed;
 		}
 	}
 
@@ -1961,6 +2005,8 @@ static int mmc_init_card(struct mmc_host *host, u32 ocr,
 
 	return 0;
 
+timing_failed:
+	mmc_timing_fallback(card, err);
 free_card:
 	if (!oldcard)
 		mmc_remove_card(card);

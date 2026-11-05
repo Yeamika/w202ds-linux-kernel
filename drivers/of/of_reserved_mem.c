@@ -204,6 +204,33 @@ static int __init __reserved_mem_reserve_reg(unsigned long node,
  * in /reserved-memory matches the values supported by the current implementation,
  * also check if ranges property has been provided
  */
+static char reserved_mem_skip[256] __initdata = CONFIG_OF_RESERVED_MEM_SKIP;
+
+static int __init reserved_mem_skip_setup(char *str)
+{
+	strscpy(reserved_mem_skip, str, sizeof(reserved_mem_skip));
+	return 0;
+}
+early_param("reserved_mem_skip", reserved_mem_skip_setup);
+
+/* true if the node name (without @unit) is in the comma separated skip list */
+static bool __init reserved_mem_skipped(const char *uname)
+{
+	size_t len = strcspn(uname, "@");
+	const char *p = reserved_mem_skip;
+
+	while (*p) {
+		size_t n = strcspn(p, ",");
+
+		if (n == len && !strncmp(p, uname, len))
+			return true;
+		p += n;
+		if (*p == ',')
+			p++;
+	}
+	return false;
+}
+
 static int __init __reserved_mem_check_root(unsigned long node)
 {
 	const __be32 *prop;
@@ -266,6 +293,8 @@ void __init fdt_scan_reserved_mem_reg_nodes(void)
 			continue;
 		if (default_cma && cma_skip_dt_default_reserved_mem())
 			continue;
+		if (reserved_mem_skipped(fdt_get_name(fdt, child, NULL)))
+			continue;
 
 		if (!of_flat_dt_get_addr_size(child, "reg", &b, &s))
 			continue;
@@ -312,6 +341,10 @@ int __init fdt_scan_reserved_mem(void)
 			continue;
 
 		uname = fdt_get_name(fdt, child, NULL);
+		if (reserved_mem_skipped(uname)) {
+			pr_info("Reserved memory: skipping %s (reserved_mem_skip)\n", uname);
+			continue;
+		}
 
 		err = __reserved_mem_reserve_reg(child, uname);
 		if (!err)

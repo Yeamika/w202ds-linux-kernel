@@ -321,7 +321,7 @@ unlock:
 	return ret;
 }
 
-static int sprd_efuse_write(void *context, u32 offset, void *val, size_t bytes)
+static int __maybe_unused sprd_efuse_write(void *context, u32 offset, void *val, size_t bytes)
 {
 	struct sprd_efuse *efuse = context;
 	bool blk_double = efuse->data->blk_double;
@@ -405,12 +405,11 @@ static int sprd_efuse_probe(struct platform_device *pdev)
 
 	econfig.stride = 1;
 	econfig.word_size = 1;
-	econfig.read_only = false;
+	econfig.read_only = true;	/* MU300: never blow eFuses */
 	econfig.name = "sprd-efuse";
 	econfig.size = efuse->data->blk_nums * SPRD_EFUSE_BLOCK_WIDTH;
 	econfig.add_legacy_fixed_of_cells = true;
 	econfig.reg_read = sprd_efuse_read;
-	econfig.reg_write = sprd_efuse_write;
 	econfig.priv = efuse;
 	econfig.dev = &pdev->dev;
 	nvmem = devm_nvmem_register(&pdev->dev, &econfig);
@@ -422,7 +421,14 @@ static int sprd_efuse_probe(struct platform_device *pdev)
 	return 0;
 }
 
+static const struct sprd_efuse_variant_data qogirn6pro_data = {
+	.blk_nums = 51,
+	.blk_offset = 53,
+	.blk_double = true,
+};
+
 static const struct of_device_id sprd_efuse_of_match[] = {
+	{ .compatible = "sprd,qogirn6pro-efuse", .data = &qogirn6pro_data },
 	{ .compatible = "sprd,ums312-efuse", .data = &ums312_data },
 	{ }
 };

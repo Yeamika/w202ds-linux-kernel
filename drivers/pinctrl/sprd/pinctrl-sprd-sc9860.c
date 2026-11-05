@@ -923,10 +923,16 @@ static struct sprd_pins_info sprd_sc9860_pins_info[] = {
 	SPRD_PINCTRL_PIN(SC9860_RFCTL39_MISC),
 };
 
+/* the first common pin's register, and the first misc pin's */
+#define SC9860_PINCTRL_REG_OFFSET	0x20
+#define SC9860_PINCTRL_REG_MISC_OFFSET	0x4020
+
 static int sprd_pinctrl_probe(struct platform_device *pdev)
 {
 	return sprd_pinctrl_core_probe(pdev, sprd_sc9860_pins_info,
-				       ARRAY_SIZE(sprd_sc9860_pins_info));
+				       ARRAY_SIZE(sprd_sc9860_pins_info),
+				       SC9860_PINCTRL_REG_OFFSET,
+				       SC9860_PINCTRL_REG_MISC_OFFSET);
 }
 
 static const struct of_device_id sprd_pinctrl_of_match[] = {

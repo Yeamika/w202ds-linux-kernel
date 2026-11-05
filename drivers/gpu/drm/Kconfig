@@ -429,3 +429,12 @@ endif
 # Separate option because drm_panel_orientation_quirks.c is shared with fbdev
 config DRM_PANEL_ORIENTATION_QUIRKS
 	tristate
+
+config DRM_W202DS_BRINGUP_HELPERS
+	bool "W202DS external KMS bring-up helpers"
+	depends on DRM
+	select DRM_CLIENT_SELECTION
+	select DRM_KMS_HELPER
+	select DRM_GEM_DMA_HELPER
+	select DRM_GEM_SHMEM_HELPER
+	select DRM_SCHED

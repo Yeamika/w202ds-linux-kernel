@@ -21,4 +21,11 @@ source "drivers/pmdomain/thead/Kconfig"
 source "drivers/pmdomain/ti/Kconfig"
 source "drivers/pmdomain/xilinx/Kconfig"
 
+config SPRD_UMS9620_IPA_PD
+	bool "Unisoc UMS9620 IPA subsystem power domain"
+	depends on ARCH_SPRD && PM
+	select PM_GENERIC_DOMAINS
+	select MFD_SYSCON
+	default y
+
 endmenu

@@ -11,6 +11,9 @@
 # Normal rules (sorted alphabetically)
 #
 .*
+# Files preserved by the W202DS source import (normally tracked upstream).
+!.w202ds-patches
+!Documentation/.renames.txt
 *.a
 *.asn1.[ch]
 *.bin

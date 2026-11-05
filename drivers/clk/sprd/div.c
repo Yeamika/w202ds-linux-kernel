@@ -24,7 +24,7 @@ unsigned long sprd_div_helper_recalc_rate(struct sprd_clk_common *common,
 	unsigned long val;
 	unsigned int reg;
 
-	regmap_read(common->regmap, common->reg + div->offset, &reg);
+	regmap_read(common->regmap, common->reg - div->offset, &reg);
 	val = reg >> div->shift;
 	val &= (1 << div->width) - 1;
 
@@ -52,10 +52,10 @@ int sprd_div_helper_set_rate(const struct sprd_clk_common *common,
 	val = divider_get_val(rate, parent_rate, NULL,
 			      div->width, 0);
 
-	regmap_read(common->regmap, common->reg + div->offset, &reg);
+	regmap_read(common->regmap, common->reg - div->offset, &reg);
 	reg &= ~GENMASK(div->width + div->shift - 1, div->shift);
 
-	regmap_write(common->regmap, common->reg + div->offset,
+	regmap_write(common->regmap, common->reg - div->offset,
 			  reg | (val << div->shift));
 
 	return 0;
@@ -71,6 +71,26 @@ static int sprd_div_set_rate(struct clk_hw *hw, unsigned long rate,
 	return sprd_div_helper_set_rate(&cd->common, &cd->div,
 					rate, parent_rate);
 }
+
+//Used only for registers that support set/clear,Fixed bug1960127
+int sprd_sc_div_helper_set_rate(const struct sprd_clk_common *common,
+				const struct sprd_div_internal *div,
+				unsigned long rate,
+				unsigned long parent_rate)
+{
+	unsigned long val;
+	unsigned int mask;
+
+	val = divider_get_val(rate, parent_rate, NULL,
+			      div->width, 0);
+
+	mask = GENMASK(div->width + div->shift - 1, div->shift);
+	regmap_update_bits(common->regmap, common->reg - div->offset,
+			  mask, val << div->shift);
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(sprd_sc_div_helper_set_rate);
 
 const struct clk_ops sprd_div_ops = {
 	.recalc_rate = sprd_div_recalc_rate,

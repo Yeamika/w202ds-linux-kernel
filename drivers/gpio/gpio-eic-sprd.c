@@ -51,10 +51,13 @@
 #define SPRD_EIC_SYNC_DATA		0x1c
 
 /*
- * The digital-chip EIC controller can support maximum 3 banks, and each bank
- * contains 8 EICs.
+ * The digital-chip EIC controller can support maximum 8 banks, and each bank
+ * contains 8 EICs: the SC9860's controllers have up to 3 banks, the UMS9620's
+ * (qogirn6pro) up to 6 - its sync controller lists six "reg" entries, and the
+ * SD card slot's card detect is line 35, in the fifth. Unisoc's own driver
+ * maps 8 as well.
  */
-#define SPRD_EIC_MAX_BANK		3
+#define SPRD_EIC_MAX_BANK		8
 #define SPRD_EIC_PER_BANK_NR		8
 #define SPRD_EIC_DATA_MASK		GENMASK(7, 0)
 #define SPRD_EIC_BIT(x)			((x) & (SPRD_EIC_PER_BANK_NR - 1))

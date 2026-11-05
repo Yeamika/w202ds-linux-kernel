@@ -1034,4 +1034,22 @@ source "drivers/leds/trigger/Kconfig"
 comment "Simatic LED drivers"
 source "drivers/leds/simatic/Kconfig"
 
+config LEDS_AW9523B
+	tristate "AW9523B LEDs with the vendor binding (ZTE V50)"
+	depends on LEDS_CLASS && I2C && OF
+	help
+	  The ZTE V50's (MU3351) front LEDs: an AW9523B as ZTE's Android device tree describes it.
+
+config LEDS_ZTE_LDO
+	tristate "LEDs on PMIC LDOs (ZTE U30 Air)"
+	depends on LEDS_CLASS && REGULATOR && OF
+	help
+	  The ZTE U30 Air's white LEDs, powered by three PMIC LDOs.
+
+config LEDS_SC27XX_KPLED
+	tristate "Spreadtrum/Unisoc PMIC keypad backlight"
+	depends on LEDS_CLASS && MFD_SC27XX_PMIC && OF
+	help
+	  The PMIC's keypad backlight sink: the U30 Air's red network LED.
+
 endif # NEW_LEDS

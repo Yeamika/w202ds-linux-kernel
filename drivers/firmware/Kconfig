@@ -300,3 +300,9 @@ source "drivers/firmware/tegra/Kconfig"
 source "drivers/firmware/xilinx/Kconfig"
 
 endmenu
+
+config SPRD_SIP_SVC
+	bool "Unisoc SIP services (DVFS through ATF)"
+	depends on ARM64 && HAVE_ARM_SMCCC
+
+source "drivers/firmware/w202ds-boot-display/Kconfig"

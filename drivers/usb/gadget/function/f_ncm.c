@@ -1011,6 +1011,7 @@ static struct sk_buff *ncm_wrap_ntb(struct gether *port,
 
 	if (skb) {
 		int		ncb_len = 0;
+		bool		low_latency = skb->len <= 256;
 		__le16		*ntb_data;
 		__le16		*ntb_ndp;
 		int		dgram_pad;
@@ -1114,6 +1115,13 @@ static struct sk_buff *ncm_wrap_ntb(struct gether *port,
 		skb_put_data(ncm->skb_tx_data, skb->data, skb->len);
 		dev_consume_skb_any(skb);
 		skb = NULL;
+		/* Do not hold interactive, short frames for NTB aggregation.
+		 * Larger frames retain the normal 300 us aggregation window.
+		 * (A short frame that opened a new NTB because the last one
+		 * was full still waits: only one NTB can be returned.)
+		 */
+		if (low_latency && !skb2)
+			skb2 = package_for_tx(ncm);
 
 	} else if (ncm->skb_tx_data) {
 		/* If we get here ncm_wrap_ntb() was called with NULL skb,

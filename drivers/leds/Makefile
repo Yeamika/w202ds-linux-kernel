@@ -125,3 +125,6 @@ obj-y					+= blink/
 
 # Simatic LED drivers
 obj-y					+= simatic/
+obj-$(CONFIG_LEDS_AW9523B)		+= leds-aw9523b.o
+obj-$(CONFIG_LEDS_ZTE_LDO)		+= leds-zte-ldo.o
+obj-$(CONFIG_LEDS_SC27XX_KPLED)		+= leds-sc27xx-kpled.o

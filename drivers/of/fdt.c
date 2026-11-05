@@ -487,6 +487,45 @@ static void __init fdt_reserve_elfcorehdr(void)
 		elfcorehdr_size >> 10, elfcorehdr_addr);
 }
 
+static char reserved_mem_add[128] __initdata = CONFIG_OF_RESERVED_MEM_ADD;
+
+static int __init reserved_mem_add_setup(char *str)
+{
+	strscpy(reserved_mem_add, str, sizeof(reserved_mem_add));
+	return 0;
+}
+early_param("reserved_mem_add", reserved_mem_add_setup);
+
+/* "base,size;base,size": reserve each pair as if the device tree had asked */
+static void __init reserved_mem_add_regions(void)
+{
+	char *p = reserved_mem_add;
+
+	while (*p) {
+		phys_addr_t base, size;
+		char *next;
+
+		base = memparse(p, &next);
+		if (next == p || *next != ',')
+			break;
+		p = next + 1;
+		size = memparse(p, &next);
+		if (next == p)
+			break;
+		p = next;
+		if (*p == ';')
+			p++;
+		if (!size)
+			continue;
+		if (memblock_is_region_reserved(base, size) || memblock_reserve(base, size))
+			pr_err("Reserved memory: failed to reserve %pa size %pa (reserved_mem_add)\n",
+			       &base, &size);
+		else
+			pr_info("Reserved memory: reserved %pa size %pa (reserved_mem_add)\n",
+				&base, &size);
+	}
+}
+
 /**
  * early_init_fdt_scan_reserved_mem() - create reserved memory regions
  *
@@ -505,6 +544,7 @@ void __init early_init_fdt_scan_reserved_mem(void)
 
 	fdt_reserve_elfcorehdr();
 	fdt_scan_reserved_mem();
+	reserved_mem_add_regions();
 
 	/* Process header /memreserve/ fields */
 	for (n = 0; ; n++) {

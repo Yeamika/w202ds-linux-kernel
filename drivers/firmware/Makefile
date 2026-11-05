@@ -38,3 +38,6 @@ obj-y				+= samsung/
 obj-y				+= smccc/
 obj-y				+= tegra/
 obj-y				+= xilinx/
+obj-$(CONFIG_SPRD_SIP_SVC) += sprd_sip_svc.o
+
+obj-$(CONFIG_W202_PJB_CONSOLE) += w202ds-boot-display/

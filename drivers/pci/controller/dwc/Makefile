@@ -54,3 +54,4 @@ obj-$(CONFIG_ARM64) += pcie-hisi.o
 obj-$(CONFIG_ARM64) += pcie-tegra194-acpi.o
 endif
 endif
+obj-$(CONFIG_PCIE_SPRD) += pcie-sprd-misc.o pcie-sprd.o

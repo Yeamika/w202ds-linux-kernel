@@ -61,6 +61,15 @@ static const struct sprd_pmic_data sc2730_data = {
 	.charger_det = SPRD_SC2730_CHG_DET,
 };
 
+/* UMP9620 BC1.2 status (CHARGE_STATUS) */
+#define SPRD_UMP9620_CHG_DET		0x239c
+
+static const struct sprd_pmic_data ump9620_data = {
+	.irq_base = 0x80,
+	.num_irqs = 11,
+	.charger_det = SPRD_UMP9620_CHG_DET,
+};
+
 static const struct sprd_pmic_data sc2731_data = {
 	.irq_base = SPRD_SC2731_IRQ_BASE,
 	.num_irqs = SPRD_SC2731_IRQ_NUMS,
@@ -243,6 +252,7 @@ static DEFINE_SIMPLE_DEV_PM_OPS(sprd_pmic_pm_ops,
 static const struct of_device_id sprd_pmic_match[] = {
 	{ .compatible = "sprd,sc2730", .data = &sc2730_data },
 	{ .compatible = "sprd,sc2731", .data = &sc2731_data },
+	{ .compatible = "sprd,ump9620", .data = &ump9620_data },
 	{},
 };
 MODULE_DEVICE_TABLE(of, sprd_pmic_match);
@@ -250,6 +260,7 @@ MODULE_DEVICE_TABLE(of, sprd_pmic_match);
 static const struct spi_device_id sprd_pmic_spi_ids[] = {
 	{ .name = "sc2730", .driver_data = (unsigned long)&sc2730_data },
 	{ .name = "sc2731", .driver_data = (unsigned long)&sc2731_data },
+	{ .name = "ump9620", .driver_data = (unsigned long)&ump9620_data },
 	{},
 };
 MODULE_DEVICE_TABLE(spi, sprd_pmic_spi_ids);
