@@ -1,10 +1,14 @@
 # SPDX-License-Identifier: GPL-2.0-only
 config DRM_DW_DP
-	tristate
+	tristate "Synopsys DesignWare DisplayPort TX core"
 	select DRM_DISPLAY_HELPER
 	select DRM_DISPLAY_DP_HELPER
+	select DRM_BRIDGE_CONNECTOR
 	select DRM_KMS_HELPER
 	select REGMAP_MMIO
+	help
+	  The DesignWare DisplayPort TX controller library (dw_dp_bind()) for
+	  platform glue drivers, in-tree or out of tree (the W200DS w202_dp).
 
 config DRM_DW_HDMI
 	tristate
