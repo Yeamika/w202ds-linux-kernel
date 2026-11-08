@@ -1825,5 +1825,3 @@ source "drivers/video/fbdev/omap2/Kconfig"
 source "drivers/video/fbdev/mmp/Kconfig"
 
 source "drivers/video/fbdev/core/Kconfig"
-
-source "drivers/video/fbdev/w202ds-legacy/Kconfig"

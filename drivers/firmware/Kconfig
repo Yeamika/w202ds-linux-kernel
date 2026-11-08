@@ -305,4 +305,4 @@ config SPRD_SIP_SVC
 	bool "Unisoc SIP services (DVFS through ATF)"
 	depends on ARM64 && HAVE_ARM_SMCCC
 
-source "drivers/firmware/w202ds-boot-display/Kconfig"
+source "drivers/firmware/pj4edk-boot-display/Kconfig"

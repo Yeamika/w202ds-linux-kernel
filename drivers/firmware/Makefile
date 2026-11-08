@@ -40,4 +40,4 @@ obj-y				+= tegra/
 obj-y				+= xilinx/
 obj-$(CONFIG_SPRD_SIP_SVC) += sprd_sip_svc.o
 
-obj-$(CONFIG_W202_PJB_CONSOLE) += w202ds-boot-display/
+obj-$(CONFIG_PJ4EDK_BOOT_DISPLAY) += pj4edk-boot-display/
