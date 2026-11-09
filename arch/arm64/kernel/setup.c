@@ -167,10 +167,22 @@ static void __init smp_build_mpidr_hash(void)
 		pr_warn("Large number of MPIDR hash buckets detected\n");
 }
 
+#ifdef CONFIG_W202DS_AUDIO_LK_DT_FIXUP
+#include <linux/libfdt.h>
+#include "w202ds-audio-boot-fixup.inc"
+#else
+static inline void *w202ds_audio_boot_fixup(void *fdt, phys_addr_t *phys)
+{
+	return fdt;
+}
+#endif
+
 static void __init setup_machine_fdt(phys_addr_t dt_phys)
 {
 	int size = 0;
 	void *dt_virt = fixmap_remap_fdt(dt_phys, &size, PAGE_KERNEL);
+	phys_addr_t fdt_phys = dt_phys;
+	void *fdt_virt;
 	const char *name;
 
 	if (dt_virt)
@@ -179,13 +191,19 @@ static void __init setup_machine_fdt(phys_addr_t dt_phys)
 	/*
 	 * dt_virt is a fixmap address, hence __pa(dt_virt) can't be used.
 	 * Pass dt_phys directly.
+	 *
+	 * The W202DS audio copy lives in kernel BSS. The FDT fixmap must keep
+	 * mapping the bootloader's blob: arm64 BUG()s if a live fixmap PTE
+	 * changes its PFN.
 	 */
-	if (!early_init_dt_scan(dt_virt, dt_phys)) {
+	fdt_virt = w202ds_audio_boot_fixup(dt_virt, &fdt_phys);
+
+	if (!early_init_dt_scan(fdt_virt, fdt_phys)) {
 		pr_crit("\n"
 			"Error: invalid device tree blob: PA=%pa, VA=%px, size=%d bytes\n"
 			"The dtb must be 8-byte aligned and must not exceed 2 MB in size.\n"
 			"\nPlease check your bootloader.\n",
-			&dt_phys, dt_virt, size);
+			&fdt_phys, fdt_virt, size);
 
 		/*
 		 * Note that in this _really_ early stage we cannot even BUG()

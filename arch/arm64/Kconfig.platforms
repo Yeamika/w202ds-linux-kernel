@@ -408,6 +408,21 @@ config ARCH_SPRD
 	help
 	  Support for Spreadtrum ARM based SoCs
 
+config W202DS_AUDIO_LK_DT_FIXUP
+	bool "W202DS: adapt the bootloader device tree for audio at boot"
+	depends on ARCH_SPRD
+	help
+	  Copy the board device tree passed by the ZTE W202DS LK bootloader
+	  into kernel memory before it is scanned and apply the audio changes
+	  of Devices/audio/devicetree/w202ds-alsa-preserve-dp.dtsi to the
+	  copy (no-map AUDCP reservations, AGCP DMA requests, microphone codec,
+	  AW88166 amplifiers and sound card nodes). The FDT fixmap keeps
+	  mapping the original blob.
+
+	  The kernel panics at boot if the passed device tree is not the
+	  matching W202DS LK board tree. Say N when the device tree is built
+	  from this repository with w202ds-alsa.dtsi or on any other board.
+
 config ARCH_THUNDER
 	bool "Cavium Inc. Thunder SoC Family"
 	help
