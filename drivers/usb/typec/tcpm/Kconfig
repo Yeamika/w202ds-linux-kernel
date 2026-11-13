@@ -76,6 +76,21 @@ config TYPEC_WCOVE
 	  To compile this driver as module, choose M here: the module will be
 	  called typec_wcove.ko
 
+config TYPEC_UMP9620
+	tristate "Unisoc UMP9620 Type-C and PD port controller (ZTE W200DS)"
+	depends on MFD_SC27XX_PMIC && OF && REGULATOR && NVMEM && EXTCON
+	depends on USB_ROLE_SWITCH && POWER_SUPPLY
+	help
+	  The USB-C port of the UMP9620 PMIC under TCPM: Type-C attach and
+	  detach from the PMIC's own Type-C block, USB Power Delivery through
+	  its PD block, the dwc3 data role and the charger's boost as VBUS,
+	  and the port's DisplayPort alternate mode (software-node connector
+	  with typec switch/mux references for the W200DS DP driver).
+	  Experimental: it does nothing unless loaded with enable=1.
+
+	  To compile this driver as a module, choose M here: the module will be
+	  called ump9620-tcpc.
+
 config TYPEC_QCOM_PMIC
 	tristate "Qualcomm PMIC USB Type-C Port Controller Manager driver"
 	depends on ARCH_QCOM || COMPILE_TEST
