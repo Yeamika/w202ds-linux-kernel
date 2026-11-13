@@ -600,7 +600,8 @@ static const struct irq_chip sprd_eic_irq = {
 	.irq_mask	= sprd_eic_irq_mask,
 	.irq_unmask	= sprd_eic_irq_unmask,
 	.irq_set_type	= sprd_eic_irq_set_type,
-	.flags		= IRQCHIP_SKIP_SET_WAKE | IRQCHIP_IMMUTABLE,
+	.flags		= IRQCHIP_SKIP_SET_WAKE | IRQCHIP_MASK_ON_SUSPEND |
+			  IRQCHIP_IMMUTABLE,
 	GPIOCHIP_IRQ_RESOURCE_HELPERS,
 };
 
