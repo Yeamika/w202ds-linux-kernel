@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-2.0-only
 /*
  * Unisoc UMS9620 (qogirn6pro) USB 3.1 / USB 2.0 combo PHY for DWC3, device mode.
- * Ported from the Unisoc 5.4 kernel (drivers/usb/phy/phy-sprd-usb31-qogirn6pro.c). Charger detection (BC1.2),
- * the Type-C redriver (ptn38003a) and the usbm cross-PHY bookkeeping are left out: the PHY is brought up for
- * peripheral mode and D+/D- are switched from the PMIC charger detector to the PHY at probe.
+ * Ported from the Unisoc 5.4 kernel (drivers/usb/phy/phy-sprd-usb31-qogirn6pro.c).
+ * BC1.2 runs through the USB PHY charger API when the Type-C adapter reports
+ * a fresh sink attachment. The redriver and usbm bookkeeping are not ported.
  *
  * Copyright (C) 2020 Spreadtrum Communications Inc.
  */
@@ -13,6 +13,7 @@
 #include <linux/kernel.h>
 #include <linux/mfd/syscon.h>
 #include <linux/module.h>
+#include <linux/mutex.h>
 #include <linux/of.h>
 #include <linux/of_platform.h>
 #include <linux/platform_device.h>
@@ -23,6 +24,7 @@
 #include <linux/usb/phy.h>
 #include <dt-bindings/soc/sprd,qogirn6pro-mask.h>
 #include <dt-bindings/soc/sprd,qogirn6pro-regs.h>
+#include "phy-sprd-ums9620-bc12.h"
 
 struct sprd_ssphy {
 	struct device		*dev;
@@ -44,6 +46,8 @@ struct sprd_ssphy {
 	atomic_t		reset;
 	atomic_t		inited;
 	bool			is_host;
+	bool			bc12_active;
+	struct mutex		charger_lock;
 };
 
 #define PHY_INIT_TIMEOUT 500
@@ -205,7 +209,7 @@ static inline void sprd_ssphy_reset_core(struct sprd_ssphy *phy)
 }
 
 
-static int sprd_ssphy_set_vbus(struct usb_phy *x, int on)
+static int sprd_ssphy_set_vbus_locked(struct usb_phy *x, int on)
 {
 	struct sprd_ssphy *phy = container_of(x, struct sprd_ssphy, phy);
 	u32 reg, msk;
@@ -271,6 +275,17 @@ static int sprd_ssphy_set_vbus(struct usb_phy *x, int on)
 	return ret;
 }
 
+static int sprd_ssphy_set_vbus(struct usb_phy *x, int on)
+{
+	struct sprd_ssphy *phy = container_of(x, struct sprd_ssphy, phy);
+	int ret;
+
+	mutex_lock(&phy->charger_lock);
+	ret = sprd_ssphy_set_vbus_locked(x, on);
+	mutex_unlock(&phy->charger_lock);
+	return ret;
+}
+
 
 /* Requirement from usb analog compliance tests */
 static void usb_config_4_cts(struct sprd_ssphy *phy)
@@ -309,7 +324,7 @@ static void usb_config_4_cts(struct sprd_ssphy *phy)
 }
 
 
-static int sprd_ssphy_init(struct usb_phy *x)
+static int sprd_ssphy_init_locked(struct usb_phy *x)
 {
 	struct sprd_ssphy *phy = container_of(x, struct sprd_ssphy, phy);
 	u32	reg, msk;
@@ -522,7 +537,7 @@ static int sprd_ssphy_init(struct usb_phy *x)
 
 
 /* Turn off PHY and core */
-static void sprd_ssphy_shutdown(struct usb_phy *x)
+static void sprd_ssphy_shutdown_locked(struct usb_phy *x)
 {
 	struct sprd_ssphy *phy = container_of(x, struct sprd_ssphy, phy);
 	u32 msk = 0, reg = 0;
@@ -591,64 +606,119 @@ static void sprd_ssphy_shutdown(struct usb_phy *x)
 	atomic_set(&phy->reset, 0);
 }
 
+static int sprd_ssphy_init(struct usb_phy *x)
+{
+	struct sprd_ssphy *phy = container_of(x, struct sprd_ssphy, phy);
+	int ret;
+
+	mutex_lock(&phy->charger_lock);
+	ret = sprd_ssphy_init_locked(x);
+	mutex_unlock(&phy->charger_lock);
+	return ret;
+}
+
+static void sprd_ssphy_shutdown(struct usb_phy *x)
+{
+	struct sprd_ssphy *phy = container_of(x, struct sprd_ssphy, phy);
+
+	mutex_lock(&phy->charger_lock);
+	sprd_ssphy_shutdown_locked(x);
+	mutex_unlock(&phy->charger_lock);
+}
+
+
+static int sprd_ssphy_data_vbus(struct sprd_ssphy *phy, bool valid)
+{
+	int ret, first;
+	u32 mask = MASK_AON_APB_OTG_VBUS_VALID_PHYREG;
+
+	first = regmap_update_bits(phy->aon_apb, REG_AON_APB_OTG_PHY_TEST,
+				   mask, valid ? mask : 0);
+	mask = MASK_AON_APB_SYS_VBUSVALID;
+	ret = regmap_update_bits(phy->aon_apb, REG_AON_APB_USB31DPCOMBPHY_CTRL,
+				 mask, valid ? mask : 0);
+	if (!first)
+		first = ret;
+	mask = BIT_ANLG_PHY_G0L_ANALOG_USB20_USB20_VBUSVLDEXT;
+	ret = regmap_update_bits(phy->ana_g0l,
+				 REG_ANLG_PHY_G0L_ANALOG_USB20_USB20_UTMI_CTL1,
+				 mask, valid ? mask : 0);
+	return first ?: ret;
+}
 
 static int sprd_ssphy_notify_connect(struct usb_phy *x,
 				enum usb_device_speed speed)
 {
 	struct sprd_ssphy *phy = container_of(x, struct sprd_ssphy, phy);
-	u32 msk = 0, reg = 0;
 
-	if (!atomic_read(&phy->inited)) {
-		dev_info(x->dev, "%s phy is not inited!\n", __func__);
+	if (!atomic_read(&phy->inited) || READ_ONCE(phy->is_host) ||
+	    READ_ONCE(phy->bc12_active))
 		return 0;
-	}
-
-	if (phy->is_host)
-		return 0;
-
-	/*hsphy vbus valid */
-	msk = MASK_AON_APB_OTG_VBUS_VALID_PHYREG;
-	reg = msk;
-	regmap_update_bits(phy->aon_apb, REG_AON_APB_OTG_PHY_TEST, msk, reg);
-	/*ssphy vbus valid */
-	msk = MASK_AON_APB_SYS_VBUSVALID;
-	reg = msk;
-	regmap_update_bits(phy->aon_apb, REG_AON_APB_USB31DPCOMBPHY_CTRL, msk, reg);
-
-	msk = BIT_ANLG_PHY_G0L_ANALOG_USB20_USB20_VBUSVLDEXT;
-	reg = msk;
-	regmap_update_bits(phy->ana_g0l,
-			REG_ANLG_PHY_G0L_ANALOG_USB20_USB20_UTMI_CTL1,	msk, reg);
-	dev_info(x->dev, "ssphy set vbus valid!\n");
-	return 0;
+	return sprd_ssphy_data_vbus(phy, true);
 }
 
 static int sprd_ssphy_notify_disconnect(struct usb_phy *x,
 				enum usb_device_speed speed)
 {
 	struct sprd_ssphy *phy = container_of(x, struct sprd_ssphy, phy);
-	u32 msk = 0;
 
-	if (!atomic_read(&phy->inited)) {
-		dev_info(x->dev, "%s phy is not inited!\n", __func__);
+	if (!atomic_read(&phy->inited) || READ_ONCE(phy->is_host) ||
+	    READ_ONCE(phy->bc12_active))
 		return 0;
+	return sprd_ssphy_data_vbus(phy, false);
+}
+
+static enum usb_charger_type sprd_ssphy_charger_detect(struct usb_phy *x)
+{
+	struct sprd_ssphy *phy = container_of(x, struct sprd_ssphy, phy);
+	enum usb_charger_type type = UNKNOWN_TYPE;
+	u32 status = 0;
+	int ret, live, restore, i;
+
+	/* TCPM calls usb_phy_set_charger_state() from its sleeping worker,
+	 * once per sink attachment, before enabling PD reception. No detection
+	 * runs in the atomic extcon notifier or while powering a host device.
+	 */
+	/* DWC3 applies a requested role on its own worker. In particular, wait
+	 * for the old host to leave before an OTG -> charger transition. Never
+	 * hold the PHY lock while waiting for that worker to initialize it.
+	 */
+	for (i = 0; i < 50; i++) {
+		if (ums9620_bc12_sink_present(phy->pmic) <= 0)
+			return UNKNOWN_TYPE;
+		if (atomic_read(&phy->inited) && !READ_ONCE(phy->is_host))
+			break;
+		msleep(20);
 	}
-
-	if (phy->is_host)
-		return 0;
-
-	/*hsphy vbus invalid */
-	msk = MASK_AON_APB_OTG_VBUS_VALID_PHYREG;
-	regmap_update_bits(phy->aon_apb, REG_AON_APB_OTG_PHY_TEST, msk, 0);
-	/*ssphy vbus invalid */
-	msk = MASK_AON_APB_SYS_VBUSVALID;
-	regmap_update_bits(phy->aon_apb, REG_AON_APB_USB31DPCOMBPHY_CTRL, msk, 0);
-
-	msk = BIT_ANLG_PHY_G0L_ANALOG_USB20_USB20_VBUSVLDEXT;
-	regmap_update_bits(phy->ana_g0l,
-			REG_ANLG_PHY_G0L_ANALOG_USB20_USB20_UTMI_CTL1,	msk, 0);
-	dev_info(x->dev, "ssphy set vbus invalid!\n");
-	return 0;
+	mutex_lock(&phy->charger_lock);
+	if (!atomic_read(&phy->inited) || READ_ONCE(phy->is_host) ||
+	    READ_ONCE(x->chg_state) != USB_CHARGER_PRESENT)
+		goto out;
+	WRITE_ONCE(phy->bc12_active, true);
+	ret = sprd_ssphy_data_vbus(phy, false);
+	if (!ret) {
+		msleep(20);
+		ret = ums9620_bc12_redetect(phy->pmic, &status);
+	}
+	/* Restore the USB data path only if external VBUS is still present. */
+	live = ums9620_bc12_sink_present(phy->pmic);
+	restore = sprd_ssphy_data_vbus(phy, live > 0);
+	if (ret || restore || live <= 0) {
+		dev_dbg(x->dev, "BC1.2 unavailable: detect=%d restore=%d live=%d\n",
+			ret, restore, live);
+		goto out;
+	}
+	switch (status & GENMASK(7, 5)) {
+	case BIT(7): type = SDP_TYPE; break;
+	case BIT(6): type = DCP_TYPE; break;
+	case BIT(5): type = CDP_TYPE; break;
+	default: break;
+	}
+	dev_info(x->dev, "fresh BC1.2 result: status=%04x type=%u\n", status, type);
+out:
+	WRITE_ONCE(phy->bc12_active, false);
+	mutex_unlock(&phy->charger_lock);
+	return type;
 }
 
 
@@ -791,6 +861,7 @@ static int sprd_ssphy_probe(struct platform_device *pdev)
 			   MASK_AON_APB_USB20_CTRL_MUX_REG, MASK_AON_APB_USB20_CTRL_MUX_REG);
 
 	platform_set_drvdata(pdev, phy);
+	mutex_init(&phy->charger_lock);
 	phy->dev = dev;
 	phy->phy.dev = dev;
 	phy->phy.label = "sprd-ssphy";
@@ -801,6 +872,7 @@ static int sprd_ssphy_probe(struct platform_device *pdev)
 	phy->phy.notify_connect = sprd_ssphy_notify_connect;
 	phy->phy.notify_disconnect = sprd_ssphy_notify_disconnect;
 	phy->phy.vbus_nb.notifier_call = sprd_ssphy_vbus_notify;
+	phy->phy.charger_detect = sprd_ssphy_charger_detect;
 	phy->phy.otg = devm_kzalloc(dev, sizeof(*phy->phy.otg), GFP_KERNEL);
 	if (!phy->phy.otg)
 		return -ENOMEM;
@@ -812,7 +884,7 @@ static int sprd_ssphy_probe(struct platform_device *pdev)
 	if (ret)
 		return dev_err_probe(dev, ret, "cannot add phy\n");
 
-	/* device mode only for now: route D+/D- from the charger detector to the USB PHY */
+	/* USB owns DP/DM except during a bounded, sink-only BC1.2 transaction. */
 	sc27xx_dpdm_switch_to_phy(phy->pmic, true);
 	dev_info(dev, "UMS9620 USB 3.1 PHY registered\n");
 	return 0;
